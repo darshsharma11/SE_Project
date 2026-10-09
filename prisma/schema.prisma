@@ -1,0 +1,240 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User role enum (Customer, StoreOwner, DeliveryPartner, Administrator)
+// Diagram model User
+model User {
+  userId          Int               @id @default(autoincrement())
+  name            String
+  email           String            @unique
+  passwordHash    String
+  phone           String
+  role            String            @default("CUSTOMER") // CUSTOMER, STORE_OWNER, DELIVERY_PARTNER, ADMIN // SRS extension
+
+  customer        Customer?
+  storeOwner      StoreOwner?
+  deliveryPartner DeliveryPartner?
+  administrator   Administrator?
+  notifications   Notification[]
+}
+
+// Diagram model Customer
+model Customer {
+  customerId      Int          @id
+  deliveryAddress String
+  user            User         @relation(fields: [customerId], references: [userId], onDelete: Cascade)
+  shoppingCart    ShoppingCart?
+  orders          Order[]
+}
+
+// Diagram model StoreOwner
+model StoreOwner {
+  ownerId         Int          @id
+  user            User         @relation(fields: [ownerId], references: [userId], onDelete: Cascade)
+  stores          Store[]
+}
+
+// Diagram model DeliveryPartner
+model DeliveryPartner {
+  partnerId       Int          @id
+  vehicleNumber   String
+  user            User         @relation(fields: [partnerId], references: [userId], onDelete: Cascade)
+  deliveries      Delivery[]
+}
+
+// Diagram model Administrator
+model Administrator {
+  adminId         Int          @id
+  user            User         @relation(fields: [adminId], references: [userId], onDelete: Cascade)
+}
+
+// Diagram model Store
+model Store {
+  storeId         Int          @id @default(autoincrement())
+  storeName       String
+  address         String
+  status          String       @default("PENDING_VERIFICATION") // PENDING_VERIFICATION, VERIFIED, SUSPENDED
+  ownerId         Int
+  owner           StoreOwner   @relation(fields: [ownerId], references: [ownerId], onDelete: Cascade)
+
+  products        Product[]
+  orders          Order[]      // SRS extension for store routing
+  pricingRules    PricingRule[]
+}
+
+// Diagram model Product
+model Product {
+  productId       Int           @id @default(autoincrement())
+  name            String
+  category        String
+  originalPrice   Float
+  currentPrice    Float
+  expiryDateTime  DateTime
+  status          String        @default("ACTIVE") // DRAFT, ACTIVE, RESERVED, SOLD, EXPIRED_REMOVED, MANUALLY_REMOVED
+  storeId         Int
+  store           Store         @relation(fields: [storeId], references: [storeId], onDelete: Cascade)
+  pricingRuleId   Int?
+  pricingRule     PricingRule?  @relation(fields: [pricingRuleId], references: [ruleId])
+
+  inventoryItem   InventoryItem?
+  cartItems       CartItem[]
+  orderItems      OrderItem[]
+  priceHistories  PriceHistory[] // SRS extension
+}
+
+// Diagram model InventoryItem
+model InventoryItem {
+  inventoryId      Int      @id @default(autoincrement())
+  quantity         Int
+  reservedQuantity Int      @default(0)
+  productId        Int      @unique
+  product          Product  @relation(fields: [productId], references: [productId], onDelete: Cascade)
+}
+
+// Diagram model PricingRule
+model PricingRule {
+  ruleId               Int       @id @default(autoincrement())
+  discountRate         Float     // e.g. 0.05 (5% per hour in decay window)
+  expiryThresholdHours Int       // e.g. 24 or 48 hours
+  maximumDiscount      Float     // e.g. 0.80 (80%)
+  minimumPriceFloor    Float     @default(1.0) // SRS extension (BR-3)
+  category             String?   // SRS extension
+  storeId              Int?      // SRS extension
+  store                Store?    @relation(fields: [storeId], references: [storeId])
+  products             Product[]
+}
+
+// Diagram model ShoppingCart
+model ShoppingCart {
+  cartId          Int        @id @default(autoincrement())
+  totalAmount     Float      @default(0)
+  customerId      Int        @unique
+  customer        Customer   @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+  items           CartItem[]
+}
+
+// Diagram model CartItem
+model CartItem {
+  cartItemId          Int          @id @default(autoincrement())
+  quantity            Int
+  price               Float
+  cartId              Int
+  cart                ShoppingCart @relation(fields: [cartId], references: [cartId], onDelete: Cascade)
+  productId           Int
+  product             Product      @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  priceHoldExpiresAt  DateTime     // SRS extension (BR-7: 15-minute price hold)
+}
+
+// Diagram model Order
+model Order {
+  orderId         Int                 @id @default(autoincrement())
+  orderDate       DateTime            @default(now())
+  status          String              @default("PLACED") // PLACED, CONFIRMED, PREPARING, OUT_FOR_DELIVERY, DELIVERED, CANCELLED
+  totalAmount     Float
+  customerId      Int
+  customer        Customer            @relation(fields: [customerId], references: [customerId], onDelete: Cascade)
+  storeId         Int                 // SRS extension (multi-store order grouping)
+  store           Store               @relation(fields: [storeId], references: [storeId])
+  orderNumber     String              @unique // SRS extension (FR-OM-2: sequential order number)
+  correlationId   String?             // SRS extension (shared correlationId across flow)
+
+  items           OrderItem[]
+  payment         Payment?
+  delivery        Delivery?
+  statusHistory   OrderStatusHistory[] // SRS extension
+}
+
+// Diagram model OrderItem
+model OrderItem {
+  orderItemId     Int      @id @default(autoincrement())
+  quantity        Int
+  unitPrice       Float
+  orderId         Int
+  order           Order    @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  productId       Int
+  product         Product  @relation(fields: [productId], references: [productId])
+}
+
+// Diagram model Payment
+model Payment {
+  paymentId       Int      @id @default(autoincrement())
+  amount          Float
+  paymentDate     DateTime @default(now())
+  method          String   // UPI, CARD, WALLET
+  status          String   @default("PENDING") // PENDING, SUCCESSFUL, FAILED, REFUNDED
+  orderId         Int      @unique
+  order           Order    @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  transactionId   String?  // SRS extension (FR-SP-2)
+}
+
+// Diagram model Delivery
+model Delivery {
+  deliveryId        Int              @id @default(autoincrement())
+  deliveryAddress   String
+  trackingNumber    String           @unique
+  status            String           @default("PENDING") // PENDING, ASSIGNED, ACCEPTED, OUT_FOR_DELIVERY, DELIVERED, CANCELLED
+  orderId           Int              @unique
+  order             Order            @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  partnerId         Int?
+  deliveryPartner   DeliveryPartner? @relation(fields: [partnerId], references: [partnerId])
+}
+
+// Diagram model Notification
+model Notification {
+  notificationId  Int      @id @default(autoincrement())
+  message         String
+  type            String   // ORDER_UPDATE, PRICE_DROP, EXPIRY_ALERT, SYSTEM, ORDER_CONFIRMATION, NEW_ORDER, etc.
+  isRead          Boolean  @default(false)
+  sentAt          DateTime @default(now())
+  userId          Int
+  user            User     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+}
+
+// ======================== SRS EXTENSION TABLES ========================
+
+// SRS extension: PriceHistory (FR-DPE-4, Section A.4)
+model PriceHistory {
+  historyId       Int      @id @default(autoincrement())
+  productId       Int
+  product         Product  @relation(fields: [productId], references: [productId], onDelete: Cascade)
+  price           Float
+  calculatedAt    DateTime @default(now())
+  reason          String?  // HOURLY_DECAY, MANUAL_EDIT, CREATION
+}
+
+// SRS extension: OrderStatusHistory (Section 4.10, A.7)
+model OrderStatusHistory {
+  historyId       Int      @id @default(autoincrement())
+  orderId         Int
+  order           Order    @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  status          String
+  timestamp       DateTime @default(now())
+  note            String?
+}
+
+// SRS extension: TraceLog (Sequence Diagram Verification)
+model TraceLog {
+  traceId         Int      @id @default(autoincrement())
+  correlationId   String
+  stepNumber      Int
+  messageLabel    String
+  fromEntity      String
+  toEntity        String
+  timestamp       DateTime @default(now())
+  details         String?
+}
+
+// SRS extension: PlatformConfig (MA-2, FR-AP-2)
+model PlatformConfig {
+  configId        Int      @id @default(autoincrement())
+  key             String   @unique
+  value           String
+  description     String?
+  updatedAt       DateTime @updatedAt
+}
