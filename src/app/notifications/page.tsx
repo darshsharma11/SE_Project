@@ -39,6 +39,18 @@ export default function NotificationsPage() {
   const [error, setError] = useState("");
   const [markingAll, setMarkingAll] = useState(false);
   const [filter, setFilter] = useState<"ALL" | "UNREAD">("ALL");
+  const [userRole, setUserRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/v1/auth/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.authenticated && data.user) {
+          setUserRole(data.user.role);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -225,8 +237,25 @@ export default function NotificationsPage() {
 
       {/* Back Link */}
       <div>
-        <Link href="/" className="text-xs font-bold text-slate-500 hover:text-slate-700 transition">
-          ← Back to Home
+        <Link
+          href={
+            userRole === "DELIVERY_PARTNER"
+              ? "/delivery/dashboard"
+              : userRole === "STORE_OWNER"
+              ? "/store"
+              : userRole === "ADMIN"
+              ? "/admin"
+              : "/customer/dashboard"
+          }
+          className="text-xs font-bold text-slate-500 hover:text-slate-700 transition"
+        >
+          {userRole === "DELIVERY_PARTNER"
+            ? "← Back to Delivery Dashboard"
+            : userRole === "STORE_OWNER"
+            ? "← Back to Store Dashboard"
+            : userRole === "ADMIN"
+            ? "← Back to Admin Console"
+            : "← Back to Customer Dashboard"}
         </Link>
       </div>
     </div>

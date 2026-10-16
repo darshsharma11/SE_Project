@@ -5,9 +5,12 @@ import { PricingEngine } from "./PricingEngine";
 import { clock } from "@/lib/clock";
 import { trace } from "@/lib/trace";
 
+import { PricingRule } from "./PricingRule";
+
 export interface AddItemOptions {
   inventory?: InventoryItem;
   pricingEngine?: PricingEngine;
+  pricingRule?: PricingRule;
   correlationId?: string;
   now?: Date;
   cartItemId?: number;
@@ -136,7 +139,7 @@ export class ShoppingCart {
 
       // Step 17: Product -> ShoppingCart currentPrice
       const currentPrice = options?.pricingEngine
-        ? await options.pricingEngine.calculatePrice(product)
+        ? await options.pricingEngine.calculatePrice(product, options?.pricingRule, now)
         : product.getDetails().currentPrice;
 
       if (correlationId) {

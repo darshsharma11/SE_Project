@@ -11,11 +11,10 @@ const AdvanceTimeSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const session = await getSession();
-    // Allow ADMIN or demo usage
-    if (session && session.role !== "ADMIN") {
+    if (!session || session.role !== "ADMIN") {
       return NextResponse.json(
-        { error: "Unauthorized: ADMIN role required" },
-        { status: 401 }
+        { error: "Unauthorized: Administrator authorization required" },
+        { status: 403 }
       );
     }
 

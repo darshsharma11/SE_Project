@@ -341,14 +341,6 @@ export default function ProductDetailPage() {
                     <span>✓</span> {cartSuccess.message}
                   </div>
                   <div className="flex items-center gap-2">
-                    {cartSuccess.correlationId && (
-                      <Link
-                        href={`/trace?id=${cartSuccess.correlationId}`}
-                        className="font-bold underline text-emerald-900"
-                      >
-                        Viva Trace (Steps 15-19) →
-                      </Link>
-                    )}
                     <Link
                       href="/cart"
                       className="bg-emerald-700 text-white font-bold px-3 py-1 rounded-lg hover:bg-emerald-800 transition"

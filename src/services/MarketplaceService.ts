@@ -353,7 +353,10 @@ export class MarketplaceService {
   /**
    * Retrieves single product by ID with full details, band, and price history.
    */
-  async getProductById(productId: number): Promise<{
+  async getProductById(
+    productId: number,
+    allowUnavailable = false
+  ): Promise<{
     product: MarketplaceProductDTO & {
       priceHistories: Array<{
         historyId: number;
@@ -379,17 +382,45 @@ export class MarketplaceService {
 
     if (!row) return null;
 
+    const availableQuantity = row.inventoryItem
+      ? Math.max(
+          0,
+          row.inventoryItem.quantity - row.inventoryItem.reservedQuantity
+        )
+      : 0;
+
+    // Enforce availability checks matching marketplace search:
+    // Expired, inactive, out of stock, or unverified store cannot be returned as purchasable product details
+    const isExpired = row.expiryDateTime.getTime() <= now.getTime();
+    if (isExpired && row.status === "ACTIVE") {
+      await prisma.product.update({
+        where: { productId },
+        data: { status: "EXPIRED_REMOVED" },
+      });
+    }
+
+    if (
+      !allowUnavailable &&
+      (row.status !== "ACTIVE" ||
+        isExpired ||
+        row.store.status !== "VERIFIED" ||
+        availableQuantity <= 0)
+    ) {
+      return null;
+    }
+
     const productDomain = ProductRepository.toDomain(row);
     const ruleDomain = row.pricingRule
       ? PricingRuleRepository.toDomain(row.pricingRule)
-      : undefined;
+      : await this.pricingEngine.resolveRuleForProduct(row);
 
-    // Fresh price recalculation
-    const currentPrice = this.pricingEngine.calculatePrice(
-      productDomain,
-      ruleDomain,
-      now
-    );
+    // Fresh authoritative price recalculation
+    const { price: currentPrice } =
+      await this.pricingEngine.calculateAuthoritativePrice(
+        productDomain,
+        ruleDomain,
+        now
+      );
 
     const hoursRemaining = Math.max(
       0,
@@ -409,13 +440,6 @@ export class MarketplaceService {
               100
           )
         : 0;
-
-    const availableQuantity = row.inventoryItem
-      ? Math.max(
-          0,
-          row.inventoryItem.quantity - row.inventoryItem.reservedQuantity
-        )
-      : 0;
 
     const nextHourMs =
       Math.ceil(now.getTime() / (3600 * 1000)) * (3600 * 1000);

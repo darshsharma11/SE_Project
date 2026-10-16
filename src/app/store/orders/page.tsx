@@ -75,6 +75,11 @@ function CountdownBadge({ seconds }: { seconds: number }) {
 export default function StoreOrdersPage() {
   const [orders, setOrders] = useState<StoreOrder[]>([]);
   const [store, setStore] = useState<{ storeId: number; storeName: string } | null>(null);
+  const [availableStores, setAvailableStores] = useState<
+    Array<{ storeId: number; storeName: string; status: string }>
+  >([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+  const [switchingOwner, setSwitchingOwner] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionLoading, setActionLoading] = useState<Record<number, boolean>>({});
@@ -82,13 +87,19 @@ export default function StoreOrdersPage() {
   const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"ACTIVE" | "HISTORY">("ACTIVE");
 
-  const fetchOrders = useCallback(async () => {
+  const fetchOrders = useCallback(async (overrideStoreId?: number) => {
     try {
-      const res = await fetch("/api/v1/store/orders");
+      const targetStoreId = overrideStoreId ?? selectedStoreId;
+      const storeQuery = targetStoreId ? `?storeId=${targetStoreId}` : "";
+      const res = await fetch(`/api/v1/store/orders${storeQuery}`);
       const data = await res.json();
       if (data.success) {
         setOrders(data.data);
         setStore(data.store);
+        if (data.store && !selectedStoreId) {
+          setSelectedStoreId(data.store.storeId);
+        }
+        setAvailableStores(data.stores || []);
       } else {
         setError(data.error || "Failed to load orders");
       }
@@ -97,13 +108,30 @@ export default function StoreOrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedStoreId]);
 
   useEffect(() => {
     fetchOrders();
-    const interval = setInterval(fetchOrders, 10000); // auto-refresh every 10s
+    const interval = setInterval(() => fetchOrders(), 10000); // auto-refresh every 10s
     return () => clearInterval(interval);
   }, [fetchOrders]);
+
+  const handleSwitchStoreOwner = async (ownerEmail: string) => {
+    try {
+      setSwitchingOwner(ownerEmail);
+      const res = await fetch("/api/v1/auth/demo-switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "STORE_OWNER", email: ownerEmail }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+      window.location.reload();
+    } catch (e: any) {
+      alert(`Failed to switch store owner: ${e.message}`);
+      setSwitchingOwner(null);
+    }
+  };
 
   const handleAccept = async (orderId: number) => {
     setActionLoading((prev) => ({ ...prev, [orderId]: true }));
@@ -175,12 +203,89 @@ export default function StoreOrdersPage() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
+      {/* Evaluator Store Owner Switcher Bar */}
+      <div className="p-3.5 bg-slate-900 text-white rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs shadow-sm">
+        <div className="flex items-center gap-2">
+          <span className="font-extrabold text-amber-400 uppercase tracking-wider text-[11px] bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30">
+            Evaluator Store Switcher
+          </span>
+          <span className="text-slate-300">
+            Switch Store Owner to inspect orders across different stores:
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={switchingOwner !== null}
+            onClick={() => handleSwitchStoreOwner("freshmart.owner@gmail.com")}
+            className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+              store?.storeName?.includes("FreshMart")
+                ? "bg-amber-500 text-slate-950 font-bold ring-2 ring-amber-300"
+                : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+            }`}
+          >
+            🏪 FreshMart (Ramesh)
+          </button>
+          <button
+            type="button"
+            disabled={switchingOwner !== null}
+            onClick={() => handleSwitchStoreOwner("greenleaf.owner@gmail.com")}
+            className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+              store?.storeName?.includes("GreenLeaf")
+                ? "bg-emerald-500 text-slate-950 font-bold ring-2 ring-emerald-300"
+                : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+            }`}
+          >
+            🌿 GreenLeaf (Priya)
+          </button>
+          <button
+            type="button"
+            disabled={switchingOwner !== null}
+            onClick={() => handleSwitchStoreOwner("cornermart.owner@gmail.com")}
+            className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+              store?.storeName?.includes("Corner")
+                ? "bg-purple-500 text-slate-950 font-bold ring-2 ring-purple-300"
+                : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+            }`}
+          >
+            🏬 CornerMart (Devendra)
+          </button>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-2 text-xs font-mono uppercase bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full font-bold mb-2">
-              🏪 Store Order Management
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <span className="inline-flex items-center gap-2 text-xs font-mono uppercase bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full font-bold">
+                Store ID: #{store?.storeId ?? "—"}
+              </span>
+
+              {/* Multi-Store Selector (if owner manages more than 1 store) */}
+              {availableStores.length > 1 && (
+                <div className="flex items-center gap-1.5 ml-2">
+                  <label htmlFor="store-select-orders" className="text-xs font-semibold text-slate-500">
+                    Switch Store:
+                  </label>
+                  <select
+                    id="store-select-orders"
+                    value={selectedStoreId ?? ""}
+                    onChange={(e) => {
+                      const id = Number(e.target.value);
+                      setSelectedStoreId(id);
+                      fetchOrders(id);
+                    }}
+                    className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 font-semibold text-slate-700 focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {availableStores.map((s) => (
+                      <option key={s.storeId} value={s.storeId}>
+                        {s.storeName} (#{s.storeId})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
             <h1 className="text-2xl font-extrabold text-slate-900">
               {store?.storeName || "My Store"} — Incoming Orders
@@ -194,7 +299,7 @@ export default function StoreOrdersPage() {
               ← Dashboard
             </Link>
             <button
-              onClick={fetchOrders}
+              onClick={() => fetchOrders()}
               className="text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-1.5 rounded-xl transition"
             >
               ↻ Refresh

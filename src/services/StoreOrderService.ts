@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { clock } from "@/lib/clock";
 import { notificationService } from "./NotificationService";
+import { paymentService } from "./PaymentService";
 
 export class StoreOrderService {
   /**
@@ -148,8 +149,8 @@ export class StoreOrderService {
         },
       });
 
-      // 2. Refund payment
-      if (order.payment) {
+      // 2. Refund payment if paid and successful
+      if (order.payment && order.payment.status === "SUCCESSFUL") {
         await tx.payment.update({
           where: { paymentId: order.payment.paymentId },
           data: { status: "REFUNDED" },

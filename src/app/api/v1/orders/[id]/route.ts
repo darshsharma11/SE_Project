@@ -58,6 +58,15 @@ export async function GET(
       }
     }
 
+    if (session.role === "DELIVERY_PARTNER") {
+      if (order.delivery?.partnerId !== session.userId) {
+        return NextResponse.json(
+          { error: "Forbidden: You are not assigned to deliver this order" },
+          { status: 403 }
+        );
+      }
+    }
+
     return NextResponse.json({
       success: true,
       data: order,

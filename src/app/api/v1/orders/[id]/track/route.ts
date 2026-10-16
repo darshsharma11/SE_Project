@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { deliveryService } from "@/services/DeliveryService";
 
 export async function GET(
@@ -19,9 +20,34 @@ export async function GET(
 
     const order = await deliveryService.getTrackingInfo(orderId);
 
-    // Authorization: customers can only see their own, store owners can see their store's
+    // Authorization checks for all roles
     if (session.role === "CUSTOMER" && order.customerId !== session.userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden: You do not have access to this order" },
+        { status: 403 }
+      );
+    }
+
+    if (session.role === "STORE_OWNER") {
+      const store = await prisma.store.findUnique({
+        where: { storeId: order.storeId },
+        select: { ownerId: true },
+      });
+      if (store?.ownerId !== session.userId) {
+        return NextResponse.json(
+          { error: "Forbidden: You do not own the store for this order" },
+          { status: 403 }
+        );
+      }
+    }
+
+    if (session.role === "DELIVERY_PARTNER") {
+      if (order.delivery?.partnerId !== session.userId) {
+        return NextResponse.json(
+          { error: "Forbidden: This delivery is not assigned to you" },
+          { status: 403 }
+        );
+      }
     }
 
     return NextResponse.json({ success: true, data: order });

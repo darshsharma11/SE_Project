@@ -70,7 +70,7 @@ export async function runPricingJob(): Promise<PricingJobResult> {
       : undefined;
 
     const previousPrice = productDomain.currentPrice;
-    const computedPrice = pricingEngine.calculatePrice(
+    const { price: computedPrice } = await pricingEngine.calculateAuthoritativePrice(
       productDomain,
       ruleDomain,
       now

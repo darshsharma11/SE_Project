@@ -62,6 +62,39 @@ export async function GET(request: NextRequest) {
         },
         orderBy: { orderDate: "desc" },
       });
+    } else if (session.role === "DELIVERY_PARTNER") {
+      orders = await prisma.order.findMany({
+        where: {
+          delivery: {
+            partnerId: session.userId,
+          },
+        },
+        include: {
+          items: {
+            include: {
+              product: {
+                select: { productId: true, name: true, category: true },
+              },
+            },
+          },
+          store: {
+            select: { storeId: true, storeName: true, address: true },
+          },
+          customer: {
+            include: {
+              user: {
+                select: { name: true, email: true, phone: true },
+              },
+            },
+          },
+          payment: true,
+          delivery: true,
+          statusHistory: {
+            orderBy: { timestamp: "desc" },
+          },
+        },
+        orderBy: { orderDate: "desc" },
+      });
     } else if (session.role === "ADMIN") {
       orders = await prisma.order.findMany({
         include: {

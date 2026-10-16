@@ -88,6 +88,28 @@ async function main() {
     },
   });
 
+  // Store 3: Unverified Store (for testing/demo availability filtering)
+  const owner3User = await prisma.user.create({
+    data: {
+      name: "Devendra Verma",
+      email: "cornermart.owner@gmail.com",
+      passwordHash,
+      phone: "+91 9876543299",
+      role: "STORE_OWNER",
+    },
+  });
+  await prisma.storeOwner.create({
+    data: { ownerId: owner3User.userId },
+  });
+  const storeUnverified = await prisma.store.create({
+    data: {
+      storeName: "Corner Daily Mart (Pending Verification)",
+      address: "Shop 12, Station Road, Santacruz, Mumbai",
+      status: "PENDING_VERIFICATION",
+      ownerId: owner3User.userId,
+    },
+  });
+
   // 3. Seed 2 Delivery Partners
   const dp1User = await prisma.user.create({
     data: {
@@ -143,6 +165,7 @@ async function main() {
     },
   ];
 
+  const seededCustomerIds: number[] = [];
   for (const c of customersData) {
     const custUser = await prisma.user.create({
       data: {
@@ -153,6 +176,7 @@ async function main() {
         role: "CUSTOMER",
       },
     });
+    seededCustomerIds.push(custUser.userId);
     await prisma.customer.create({
       data: {
         customerId: custUser.userId,
@@ -355,6 +379,7 @@ async function main() {
     },
   ];
 
+  const seededProductIds: number[] = [];
   for (const item of productsToSeed) {
     const expiryDateTime = new Date(now.getTime() + item.hoursToExpiry * 3600 * 1000);
     const ruleId = ruleMap.get(item.category);
@@ -364,7 +389,7 @@ async function main() {
     if (ruleDef && item.hoursToExpiry <= ruleDef.expiryThresholdHours) {
       const elapsed = ruleDef.expiryThresholdHours - item.hoursToExpiry;
       const discount = Math.min(ruleDef.discountRate * elapsed, ruleDef.maximumDiscount, 0.80);
-      currentPrice = Math.round(Math.max(item.originalPrice * (1 - discount), ruleDef.minimumPriceFloor));
+      currentPrice = Math.round(Math.min(item.originalPrice, Math.max(item.originalPrice * (1 - discount), ruleDef.minimumPriceFloor)));
     }
 
     const prod = await prisma.product.create({
@@ -379,6 +404,7 @@ async function main() {
         pricingRuleId: ruleId,
       },
     });
+    seededProductIds.push(prod.productId);
 
     await prisma.inventoryItem.create({
       data: {
@@ -395,6 +421,123 @@ async function main() {
         reason: "INITIAL_SEED",
       },
     });
+  }
+
+  // Seed product under unverified store (must NOT appear in marketplace search)
+  const unverifiedProd = await prisma.product.create({
+    data: {
+      name: "Unverified Store Snack Pack",
+      category: "Snacks",
+      originalPrice: 50,
+      currentPrice: 50,
+      expiryDateTime: new Date(now.getTime() + 48 * 3600 * 1000),
+      status: "ACTIVE",
+      storeId: storeUnverified.storeId,
+    },
+  });
+  await prisma.inventoryItem.create({
+    data: {
+      productId: unverifiedProd.productId,
+      quantity: 20,
+      reservedQuantity: 0,
+    },
+  });
+
+  // Seed demo confirmed order & assigned delivery for initial demo visibility
+  if (seededCustomerIds.length > 0 && seededProductIds.length > 0) {
+    const demoOrder = await prisma.order.create({
+      data: {
+        orderNumber: "ORD-DEMO-001",
+        customerId: seededCustomerIds[0],
+        storeId: store1.storeId,
+        status: "CONFIRMED",
+        totalAmount: 120,
+        items: {
+          create: [
+            {
+              productId: seededProductIds[1],
+              quantity: 1,
+              unitPrice: 120,
+            },
+          ],
+        },
+        payment: {
+          create: {
+            amount: 120,
+            method: "UPI",
+            status: "SUCCESSFUL",
+            transactionId: "TXN-DEMO-001",
+          },
+        },
+        statusHistory: {
+          create: [
+            { status: "PLACED", note: "Order placed by demo customer" },
+            { status: "CONFIRMED", note: "Payment confirmed via UPI" },
+          ],
+        },
+      },
+    });
+
+    await prisma.delivery.create({
+      data: {
+        orderId: demoOrder.orderId,
+        deliveryAddress: "Flat 302, Sea Breeze Apts, Bandra West, Mumbai",
+        trackingNumber: "TRK-DEMO-001",
+        status: "ASSIGNED",
+        partnerId: dp1User.userId,
+      },
+    });
+
+    // Seed demo order for Store 2 (GreenLeaf) with Organic Paneer & Fresh Croissants
+    if (seededCustomerIds.length > 1 && seededProductIds.length > 9) {
+      const demoOrder2 = await prisma.order.create({
+        data: {
+          orderNumber: "ORD-DEMO-002",
+          customerId: seededCustomerIds[1], // Sneha Kulkarni
+          storeId: store2.storeId,
+          status: "CONFIRMED",
+          totalAmount: 200,
+          items: {
+            create: [
+              {
+                productId: seededProductIds[8], // Organic Paneer 200g
+                quantity: 1,
+                unitPrice: 110,
+              },
+              {
+                productId: seededProductIds[9], // Fresh Croissants (Pack of 2)
+                quantity: 1,
+                unitPrice: 90,
+              },
+            ],
+          },
+          payment: {
+            create: {
+              amount: 200,
+              method: "CARD",
+              status: "SUCCESSFUL",
+              transactionId: "TXN-DEMO-002",
+            },
+          },
+          statusHistory: {
+            create: [
+              { status: "PLACED", note: "Order placed for GreenLeaf Organic Grocers" },
+              { status: "CONFIRMED", note: "Payment authorized via Credit Card" },
+            ],
+          },
+        },
+      });
+
+      await prisma.delivery.create({
+        data: {
+          orderId: demoOrder2.orderId,
+          deliveryAddress: "B-14 Palm Springs, Khar West, Mumbai",
+          trackingNumber: "TRK-DEMO-002",
+          status: "ASSIGNED",
+          partnerId: dp2User.userId,
+        },
+      });
+    }
   }
 
   // 7. Seed initial PlatformConfig

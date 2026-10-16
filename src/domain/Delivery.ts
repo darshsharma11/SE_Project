@@ -42,6 +42,19 @@ export class Delivery {
    * Diagram method & Sequence Steps 35, 38: updateStatus()
    */
   updateStatus(newStatus: DeliveryStatus): void {
+    const validTransitions: Record<DeliveryStatus, DeliveryStatus[]> = {
+      PENDING: ["ASSIGNED", "CANCELLED"],
+      ASSIGNED: ["ACCEPTED", "CANCELLED"],
+      ACCEPTED: ["OUT_FOR_DELIVERY", "CANCELLED"],
+      OUT_FOR_DELIVERY: ["DELIVERED", "CANCELLED"],
+      DELIVERED: [],
+      CANCELLED: [],
+    };
+
+    const allowed = validTransitions[this.status] ?? [];
+    if (!allowed.includes(newStatus)) {
+      throw new Error(`invalidStatusTransition: Cannot transition delivery from ${this.status} to ${newStatus}`);
+    }
     this.status = newStatus;
   }
 

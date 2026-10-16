@@ -1,4 +1,5 @@
 import { trace } from "@/lib/trace";
+import { prisma } from "@/lib/prisma";
 
 export interface CardDetails {
   cardNumber?: string;
@@ -24,6 +25,21 @@ export interface PaymentGatewayResult {
   transactionId: string;
   status: "SUCCESSFUL" | "FAILED";
   failureReason?: string;
+}
+
+export interface ProcessRefundParams {
+  paymentId: number;
+  amount: number;
+  correlationId?: string;
+  reason?: string;
+  simulateFailure?: boolean;
+}
+
+export interface RefundGatewayResult {
+  success: boolean;
+  refundTransactionId: string;
+  status: "REFUNDED" | "FAILED";
+  error?: string;
 }
 
 export class PaymentService {
@@ -135,6 +151,69 @@ export class PaymentService {
       success: true,
       transactionId,
       status: "SUCCESSFUL",
+    };
+  }
+
+  /**
+   * Sequence & SRS requirement: processRefund
+   * Gateway contract: verifies payment exists and is in SUCCESSFUL status.
+   * Fails if simulateFailure is true, amount <= 0, or payment not in SUCCESSFUL state.
+   */
+  async processRefund(params: ProcessRefundParams): Promise<RefundGatewayResult> {
+    const payment = await prisma.payment.findUnique({
+      where: { paymentId: params.paymentId },
+    });
+
+    if (!payment) {
+      return {
+        success: false,
+        refundTransactionId: "",
+        status: "FAILED",
+        error: `Payment record with ID ${params.paymentId} not found`,
+      };
+    }
+
+    if (payment.status !== "SUCCESSFUL") {
+      return {
+        success: false,
+        refundTransactionId: "",
+        status: "FAILED",
+        error: `Gateway contract violation: Cannot refund payment with status '${payment.status}'. Only SUCCESSFUL payments are eligible for refund.`,
+      };
+    }
+
+    if (params.simulateFailure || params.amount <= 0) {
+      return {
+        success: false,
+        refundTransactionId: "",
+        status: "FAILED",
+        error: "Simulated refund failure: gateway declined refund request",
+      };
+    }
+
+    const refundTransactionId = `REF-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    // Update status in database
+    await prisma.payment.update({
+      where: { paymentId: params.paymentId },
+      data: { status: "REFUNDED" },
+    });
+
+    if (params.correlationId) {
+      await trace.step({
+        correlationId: params.correlationId,
+        stepNumber: 42,
+        label: "paymentRefunded",
+        from: "PaymentGateway",
+        to: "Payment",
+        details: { refundTransactionId, amount: params.amount, reason: params.reason },
+      });
+    }
+
+    return {
+      success: true,
+      refundTransactionId,
+      status: "REFUNDED",
     };
   }
 }

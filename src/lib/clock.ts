@@ -50,6 +50,13 @@ class ClockService {
   }
 
   /**
+   * Advance the clock by minutes.
+   */
+  advanceMinutes(minutes: number): void {
+    this.offsetMs += minutes * 60 * 1000;
+  }
+
+  /**
    * Reset clock to actual system time.
    */
   reset(): void {

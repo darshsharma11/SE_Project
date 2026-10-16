@@ -1,11 +1,30 @@
 import Link from "next/link";
 import ClockWidget from "@/components/ClockWidget";
 import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
+
+export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
+  const session = await getSession();
   const productCount = await prisma.product.count();
   const storeCount = await prisma.store.count();
   const userCount = await prisma.user.count();
+
+  // Role-appropriate hero CTA
+  let ctaHref = "/marketplace";
+  let ctaLabel = "🛒 Open Marketplace (Live Decay Prices)";
+
+  if (session?.role === "DELIVERY_PARTNER") {
+    ctaHref = "/delivery/dashboard";
+    ctaLabel = "🛵 Go to Delivery Dashboard";
+  } else if (session?.role === "STORE_OWNER") {
+    ctaHref = "/store";
+    ctaLabel = "🏪 Go to Store Dashboard";
+  } else if (session?.role === "ADMIN") {
+    ctaHref = "/admin";
+    ctaLabel = "🛡️ Go to Administrator Console";
+  }
 
   return (
     <div className="space-y-8">
@@ -28,23 +47,26 @@ export default async function HomePage() {
 
           <div className="flex flex-wrap gap-3">
             <Link
-              href="/marketplace"
+              href={ctaHref}
               className="bg-emerald-400 hover:bg-emerald-300 text-slate-900 font-extrabold px-5 py-2.5 rounded-lg shadow transition text-sm flex items-center gap-1.5"
             >
-              <span>🛒 Open Marketplace (Live Decay Prices)</span>
+              <span>{ctaLabel}</span>
             </Link>
-            <Link
-              href="/login"
-              className="bg-white/10 hover:bg-white/20 text-white font-semibold px-4 py-2.5 rounded-lg border border-white/20 transition text-sm"
-            >
-              Sign In (Demo Roles)
-            </Link>
-            <Link
-              href="/trace"
-              className="bg-slate-800/80 hover:bg-slate-800 text-emerald-300 border border-emerald-400/40 font-semibold px-4 py-2.5 rounded-lg transition text-sm"
-            >
-              Sequence Diagram Live Trace
-            </Link>
+            {session ? (
+              <Link
+                href="/notifications"
+                className="bg-white/10 hover:bg-white/20 text-white font-semibold px-4 py-2.5 rounded-lg border border-white/20 transition text-sm"
+              >
+                🔔 Notifications
+              </Link>
+            ) : (
+              <Link
+                href="/login"
+                className="bg-white/10 hover:bg-white/20 text-white font-semibold px-4 py-2.5 rounded-lg border border-white/20 transition text-sm"
+              >
+                Sign In (Demo Roles)
+              </Link>
+            )}
           </div>
         </div>
       </div>
@@ -74,7 +96,7 @@ export default async function HomePage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
           <div className="border border-slate-100 bg-slate-50 p-4 rounded-lg">
             <div className="font-bold text-emerald-700 mb-1">Module 1: Product, Expiry & Dynamic Pricing</div>
-            <p className="text-slate-600 text-xs mb-2">Sequence Diagram steps 1 - 14.</p>
+            <p className="text-slate-600 text-xs mb-2">Automated dynamic decay-pricing and inventory life-cycle.</p>
             <ul className="list-disc list-inside space-y-1 text-xs text-slate-600">
               <li>Product search with stock availability check</li>
               <li>Dynamic decay calculation via PricingEngine & PricingRule</li>
@@ -84,12 +106,12 @@ export default async function HomePage() {
           </div>
           <div className="border border-slate-100 bg-slate-50 p-4 rounded-lg">
             <div className="font-bold text-emerald-700 mb-1">Module 2: Cart, Order, Payment & Delivery</div>
-            <p className="text-slate-600 text-xs mb-2">Sequence Diagram steps 15 - 48.</p>
+            <p className="text-slate-600 text-xs mb-2">End-to-end purchasing, payment simulation, and delivery fulfillment.</p>
             <ul className="list-disc list-inside space-y-1 text-xs text-slate-600">
               <li>15-minute cart price hold (BR-7)</li>
-              <li>Stock reservation on checkout (step 23)</li>
-              <li>Mock PaymentGateway authorization & failure rollback (step 41-45)</li>
-              <li>Delivery assignment & partner status progression (step 32-40)</li>
+              <li>Stock reservation on checkout</li>
+              <li>Mock PaymentGateway authorization & failure rollback</li>
+              <li>Delivery assignment & partner status progression</li>
             </ul>
           </div>
         </div>

@@ -53,7 +53,21 @@ export default function StorePortalPage() {
     storeId: number;
     storeName: string;
     status: string;
+    address?: string;
   } | null>(null);
+  const [availableStores, setAvailableStores] = useState<
+    Array<{ storeId: number; storeName: string; status: string }>
+  >([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+  const [analytics, setAnalytics] = useState<{
+    totalProducts: number;
+    totalInventory: number;
+    nearExpiryCount: number;
+    totalOrders: number;
+    pendingOrders: number;
+    storeRevenue: number;
+  } | null>(null);
+  const [switchingOwner, setSwitchingOwner] = useState<string | null>(null);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
@@ -84,14 +98,17 @@ export default function StorePortalPage() {
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
 
   // Load Data
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (overrideStoreId?: number) => {
     try {
       setLoading(true);
       setError("");
 
+      const targetStoreId = overrideStoreId ?? selectedStoreId;
+      const storeQuery = targetStoreId ? `?storeId=${targetStoreId}` : "";
+
       const [prodRes, ruleRes] = await Promise.all([
-        fetch("/api/v1/store/products"),
-        fetch("/api/v1/store/pricing-rules"),
+        fetch(`/api/v1/store/products${storeQuery}`),
+        fetch(`/api/v1/store/pricing-rules${storeQuery}`),
       ]);
 
       if (prodRes.status === 401) {
@@ -108,17 +125,42 @@ export default function StorePortalPage() {
 
       setProducts(prodData.data || []);
       setStoreInfo(prodData.store || null);
+      if (prodData.store) {
+        setSelectedStoreId(prodData.store.storeId);
+      }
+      setAvailableStores(prodData.stores || []);
+      setAnalytics(prodData.analytics || null);
       setRules(ruleData.data || []);
     } catch (err: any) {
       setError(err.message || "Failed to load store data");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedStoreId]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Evaluator switcher between seeded store owners
+  const handleSwitchStoreOwner = async (ownerEmail: string) => {
+    try {
+      setSwitchingOwner(ownerEmail);
+      const res = await fetch("/api/v1/auth/demo-switch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "STORE_OWNER", email: ownerEmail }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error);
+
+      // Force page reload to reinitialize navigation and store state cleanly
+      window.location.reload();
+    } catch (e: any) {
+      alert(`Failed to switch store owner: ${e.message}`);
+      setSwitchingOwner(null);
+    }
+  };
 
   // Set default expiry to +12 hours from now
   const setDefaultExpiry = () => {
@@ -291,17 +333,81 @@ export default function StorePortalPage() {
     else bandCounts.STANDARD++;
   });
 
+  if (error && !storeInfo) {
+    return (
+      <div className="space-y-6">
+        <ClockWidget />
+        <div className="max-w-xl mx-auto my-12 p-8 bg-white rounded-2xl border border-slate-200 text-center shadow-sm space-y-4">
+          <div className="text-4xl">🏪</div>
+          <h2 className="text-xl font-bold text-slate-800">Store Owner Access Required</h2>
+          <p className="text-sm text-slate-600">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <ClockWidget />
 
       {/* Store Header Banner */}
-      <div className="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200 shadow-sm">
+      <div className="bg-white p-6 sm:p-8 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+        {/* Evaluator Store Owner Switcher Bar */}
+        <div className="p-3.5 bg-slate-900 text-white rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-extrabold text-amber-400 uppercase tracking-wider text-[11px] bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30">
+              Evaluator Store Switcher
+            </span>
+            <span className="text-slate-300">
+              Switch between seeded store owners to inspect different stores:
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={switchingOwner !== null}
+              onClick={() => handleSwitchStoreOwner("freshmart.owner@gmail.com")}
+              className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+                storeInfo?.storeName?.includes("FreshMart")
+                  ? "bg-amber-500 text-slate-950 font-bold ring-2 ring-amber-300"
+                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+              }`}
+            >
+              🏪 FreshMart (Ramesh)
+            </button>
+            <button
+              type="button"
+              disabled={switchingOwner !== null}
+              onClick={() => handleSwitchStoreOwner("greenleaf.owner@gmail.com")}
+              className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+                storeInfo?.storeName?.includes("GreenLeaf")
+                  ? "bg-emerald-500 text-slate-950 font-bold ring-2 ring-emerald-300"
+                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+              }`}
+            >
+              🌿 GreenLeaf (Priya)
+            </button>
+            <button
+              type="button"
+              disabled={switchingOwner !== null}
+              onClick={() => handleSwitchStoreOwner("cornermart.owner@gmail.com")}
+              className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+                storeInfo?.storeName?.includes("Corner")
+                  ? "bg-purple-500 text-slate-950 font-bold ring-2 ring-purple-300"
+                  : "bg-slate-800 text-slate-200 hover:bg-slate-700"
+              }`}
+            >
+              🏬 CornerMart (Devendra - Pending)
+            </button>
+          </div>
+        </div>
+
+        {/* Store Title & Action Buttons */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 pb-5">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-mono uppercase bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded font-bold">
-                Store Owner Console
+                Store ID: #{storeInfo?.storeId ?? "—"}
               </span>
               <span
                 className={`text-xs px-2.5 py-0.5 rounded font-bold uppercase ${
@@ -314,13 +420,41 @@ export default function StorePortalPage() {
                   ? "✓ Verified Store (BR-1)"
                   : "⚠ " + (storeInfo?.status || "Pending Verification")}
               </span>
+
+              {/* Multi-Store Selector (if owner manages more than 1 store) */}
+              {availableStores.length > 1 && (
+                <div className="flex items-center gap-1.5 ml-2">
+                  <label htmlFor="store-select" className="text-xs font-semibold text-slate-500">
+                    Switch Store:
+                  </label>
+                  <select
+                    id="store-select"
+                    value={selectedStoreId ?? ""}
+                    onChange={(e) => {
+                      const id = Number(e.target.value);
+                      setSelectedStoreId(id);
+                      loadData(id);
+                    }}
+                    className="text-xs bg-slate-50 border border-slate-300 rounded-lg px-2 py-1 font-semibold text-slate-700 focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {availableStores.map((s) => (
+                      <option key={s.storeId} value={s.storeId}>
+                        {s.storeName} (#{s.storeId}) - {s.status}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
+
             <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800 mt-2">
               {storeInfo?.storeName || "My Store Dashboard"}
             </h1>
-            <p className="text-xs text-slate-500 mt-1">
-              Sequence Steps 1–14 Module 1: Product inventory management, dynamic pricing decay rules & live preview.
-            </p>
+            {storeInfo?.address && (
+              <p className="text-xs text-slate-500 mt-1 font-mono">
+                📍 {storeInfo.address}
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -344,20 +478,70 @@ export default function StorePortalPage() {
           </div>
         </div>
 
+        {/* Store Analytics Cards */}
+        {analytics && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                📊 Store Performance & Inventory Analytics
+              </h2>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+                <span className="text-[11px] font-semibold text-slate-500 block">Total Listed</span>
+                <span className="text-xl font-black text-slate-800 mt-0.5 block">
+                  {analytics.totalProducts}
+                </span>
+                <span className="text-[10px] text-slate-400">Active catalog items</span>
+              </div>
+              <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl">
+                <span className="text-[11px] font-semibold text-blue-700 block">Available Stock</span>
+                <span className="text-xl font-black text-blue-900 mt-0.5 block">
+                  {analytics.totalInventory}
+                </span>
+                <span className="text-[10px] text-blue-600">Units in inventory</span>
+              </div>
+              <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl">
+                <span className="text-[11px] font-semibold text-amber-700 block">Near Expiry (&lt;24h)</span>
+                <span className="text-xl font-black text-amber-900 mt-0.5 block">
+                  {analytics.nearExpiryCount}
+                </span>
+                <span className="text-[10px] text-amber-600">Urgent & critical decay</span>
+              </div>
+              <div className="p-3.5 bg-purple-50/70 border border-purple-200 rounded-xl">
+                <span className="text-[11px] font-semibold text-purple-700 block">Store Orders</span>
+                <span className="text-xl font-black text-purple-900 mt-0.5 block">
+                  {analytics.totalOrders}
+                </span>
+                <span className="text-[10px] text-purple-600">
+                  {analytics.pendingOrders > 0 ? `${analytics.pendingOrders} awaiting action` : "All processed"}
+                </span>
+              </div>
+              <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl col-span-2 sm:col-span-1">
+                <span className="text-[11px] font-semibold text-emerald-700 block">Store Revenue</span>
+                <span className="text-xl font-black text-emerald-900 mt-0.5 block">
+                  ₹{analytics.storeRevenue}
+                </span>
+                <span className="text-[10px] text-emerald-600">Confirmed & delivered</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Alert / Feedback messages */}
         {error && (
-          <div className="mt-4 p-3.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs">
+          <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs">
             {error}
           </div>
         )}
         {successMsg && (
-          <div className="mt-4 p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs">
+          <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-xl text-xs">
             {successMsg}
           </div>
         )}
 
         {/* Band Counts Metric Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div className="p-4 bg-rose-50/70 border border-rose-200 rounded-xl">
             <span className="text-xs font-bold text-rose-700 uppercase tracking-wider block">
               🔴 Critical Band (0–6h)

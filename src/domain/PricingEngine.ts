@@ -2,6 +2,8 @@ import { Product } from "./Product";
 import { PricingRule } from "./PricingRule";
 import { clock } from "@/lib/clock";
 import { trace } from "@/lib/trace";
+import { prisma } from "@/lib/prisma";
+import { PricingRuleRepository } from "@/repositories/PricingRuleRepository";
 
 export interface PricingTraceContext {
   correlationId: string;
@@ -13,7 +15,7 @@ export class PricingEngine {
    * Flow inside calculatePrice:
    * 7/8: getExpiryDetails() (PricingEngine -> Product)
    * 9/10: PricingRule.calculateDiscount(expiryTime) (PricingEngine -> PricingRule)
-   * floor and cap
+   * floor and cap (Never exceed original price)
    * 11/12: Product.updatePrice(discountedPrice) only if changed
    * 13: return currentPrice
    */
@@ -48,16 +50,8 @@ export class PricingEngine {
       });
     }
 
-    // Fallback rule if not provided
-    const activeRule =
-      rule ??
-      new PricingRule({
-        ruleId: 0,
-        discountRate: 0.025,
-        expiryThresholdHours: 24,
-        maximumDiscount: 0.8,
-        minimumPriceFloor: 1.0,
-      });
+    // Resolve active rule or fallback
+    const activeRule = rule ?? (await this.resolveRuleForProduct(product));
 
     // Step 9: calculateDiscount(expiryTime)
     if (traceCtx) {
@@ -91,12 +85,11 @@ export class PricingEngine {
       });
     }
 
-    // Floor and cap
-    const discountedPrice = Math.max(
-      product.originalPrice * (1 - discountFraction),
-      activeRule.minimumPriceFloor
-    );
-    const roundedPrice = Math.round(discountedPrice);
+    // Floor and cap: Never raise price above originalPrice
+    const rawDiscounted = product.originalPrice * (1 - discountFraction);
+    const flooredPrice = Math.max(rawDiscounted, activeRule.minimumPriceFloor);
+    const effectivePrice = Math.min(product.originalPrice, flooredPrice);
+    const roundedPrice = Math.round(effectivePrice);
 
     // Step 11 & 12: updatePrice only if changed
     const previousPrice = product.currentPrice;
@@ -182,16 +175,75 @@ export class PricingEngine {
       });
 
     const discountFraction = activeRule.calculateDiscount(expiry, currentNow);
-    const discountedPrice = Math.max(
-      product.originalPrice * (1 - discountFraction),
-      activeRule.minimumPriceFloor
-    );
+    const rawDiscounted = product.originalPrice * (1 - discountFraction);
+    const flooredPrice = Math.max(rawDiscounted, activeRule.minimumPriceFloor);
+    // Never raise price above originalPrice because of floor
+    const effectivePrice = Math.min(product.originalPrice, flooredPrice);
 
-    const roundedPrice = Math.round(discountedPrice);
+    const roundedPrice = Math.round(effectivePrice);
     if (product.currentPrice !== roundedPrice) {
       product.updatePrice(roundedPrice, "HOURLY_DECAY");
     }
     return product.currentPrice;
+  }
+
+  /**
+   * Resolves the applicable pricing rule for a product:
+   * 1. Assigned pricingRuleId
+   * 2. Category-matching rule (store-scoped or global)
+   * 3. Fallback rule
+   */
+  async resolveRuleForProduct(product: {
+    productId?: number;
+    category?: string;
+    pricingRuleId?: number | null;
+    storeId?: number;
+  }): Promise<PricingRule> {
+    if (product.pricingRuleId) {
+      const row = await prisma.pricingRule.findUnique({
+        where: { ruleId: product.pricingRuleId },
+      });
+      if (row) return PricingRuleRepository.toDomain(row);
+    }
+
+    if (product.category) {
+      const row = await prisma.pricingRule.findFirst({
+        where: {
+          category: product.category,
+          OR: [
+            { storeId: product.storeId ?? undefined },
+            { storeId: null },
+          ],
+        },
+        orderBy: { storeId: "desc" },
+      });
+      if (row) return PricingRuleRepository.toDomain(row);
+    }
+
+    return new PricingRule({
+      ruleId: 0,
+      discountRate: 0.025,
+      expiryThresholdHours: 24,
+      maximumDiscount: 0.8,
+      minimumPriceFloor: 1.0,
+    });
+  }
+
+  /**
+   * Authoritative price calculator used across Marketplace, Product Details, Cart, and Checkout.
+   */
+  async calculateAuthoritativePrice(
+    product: Product,
+    providedRule?: PricingRule,
+    currentNow: Date = clock.now()
+  ): Promise<{ price: number; rule: PricingRule; discountPercent: number }> {
+    const rule = providedRule ?? (await this.resolveRuleForProduct(product));
+    const price = this.calculatePrice(product, rule, currentNow);
+    const discountPercent =
+      product.originalPrice > 0
+        ? Math.round(((product.originalPrice - price) / product.originalPrice) * 100)
+        : 0;
+    return { price, rule, discountPercent };
   }
 
   /**

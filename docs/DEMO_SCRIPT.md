@@ -1,200 +1,167 @@
-# Viva Demo Script
+# Evaluator Demonstration Script: Expiry-Based Grocery Marketplace
 
-> Click-by-click walkthrough for the live defense/viva.
-> Open five browser profiles (or incognito windows) before starting:
+> **Zero-Login Evaluator Demonstration Guide**
+> 
+> In Demo Mode (`DEMO_MODE="true"`), the application features a persistent **Demo Role Switcher** strip at the top of every page. You do **not** need multiple browser profiles, incognito windows, or login credentials.
+> Simply click any of the 4 role buttons in the switcher strip to switch immediately into that role:
 >
-> | Profile | Account | URL |
-> |---------|---------|-----|
-> | A - Customer | customer@demo.com / demo123 | http://localhost:3000 |
-> | B - Store 1 Owner | store1@demo.com / demo123 | http://localhost:3000 |
-> | C - Store 2 Owner | store2@demo.com / demo123 | http://localhost:3000 |
-> | D - Delivery Partner | partner@demo.com / demo123 | http://localhost:3000 |
-> | E - Admin | admin@demo.com / demo123 | http://localhost:3000 |
+> | Role Button | Persona Name | Seeded Account | Role Dashboard | Primary Workflows |
+> |-------------|--------------|----------------|----------------|-------------------|
+> | 🛒 **Customer** | Rahul Verma | `rahul.customer@gmail.com` | `/marketplace` | Browse decay prices, product detail, 15-min cart hold, checkout, my orders & tracking |
+> | 🏪 **Store Owner** | Ramesh Patel | `freshmart.owner@gmail.com` | `/store` | Product inventory, custom decay pricing rules, live price preview, incoming orders |
+> | 🛵 **Delivery Partner** | Vikram Singh | `partner1@zerowaste.org` | `/delivery/dashboard` | Assigned deliveries, status progression (`ACCEPTED` → `OUT_FOR_DELIVERY` → `DELIVERED`) |
+> | 🛡️ **Administrator** | Admin Officer | `admin@zerowaste.org` | `/admin` | Store verification (BR-1), batch decay pricing runner, time-travel simulation |
 
 ---
 
-## Setup (run once before demo)
+## 1. Quick Setup (Run Once Before Demo)
 
 ```bash
-npm install && npm run db:reset && npm run dev
-```
-
-The seed creates all demo accounts, two verified stores, products with near-expiry dates, and a delivery partner.
-
----
-
-## Part (a): Search and Expiry-Based Dynamic Pricing — Steps 1-14
-
-**Profile A (Customer)**
-
-1. Go to `http://localhost:3000/marketplace`.
-2. The page shows all ACTIVE, in-stock, non-expired products.
-3. Note the green/amber/red **expiry band badges** (STANDARD / SOON / URGENT / CRITICAL).
-4. In the search box, type **"milk"** and press Search.
-5. Observe: only products matching "milk" appear. Out-of-stock and expired products are absent.
-6. Click **Show Details** on any product.
-7. Observe: `originalPrice`, `currentPrice`, `discountPercent`, `hoursRemaining` and the expiry band are shown.
-8. Open `/trace` (Viva Trace link in Navbar).
-9. Find the most recent `correlationId` prefixed `search-`.
-10. Click it. Verify the trace shows **steps 1 through 14** in order:
-    - Step 1: `searchProduct(productName)` Customer → Marketplace
-    - Step 2: `getProductDetails()` Marketplace → Product
-    - Step 4: `checkAvailability()` Product → InventoryItem
-    - Step 6: `calculateCurrentPrice(Product)` → PricingEngine
-    - Steps 7-13: pricing engine flow (getExpiryDetails, calculateDiscount, updatePrice, currentPrice)
-    - Step 14: `displayProductAndPrice()` Marketplace → Customer
-
-**Key talking point:** Every price is computed by `PricingEngine` on the server. The UI displays what the DB stores — no client-side calculation.
-
----
-
-## Part (b): Advance the Clock and Watch Re-pricing — Steps 6-13
-
-**Profile E (Admin)**
-
-1. Go to `http://localhost:3000/admin`.
-2. Under **Clock Control**, click **+6 hours** (or type `6` in the advance field and click Advance).
-3. The virtual clock is now 6 hours ahead.
-4. Under **Pricing Engine**, click **Trigger Decay Job** (calls `POST /api/v1/pricing/apply-decay`).
-5. **Expected:** Products with `expiryThresholdHours >= 6` now show higher discount percentages.
-6. Switch to **Profile A (Customer)**, refresh `/marketplace`.
-7. Observe: prices have dropped. Red CRITICAL badges appear for products with < 6h left.
-8. Go to `/trace`, find the `decay-` correlationId. Verify steps 6-13 appear for each recalculated product.
-
-**Key talking point:** The pricing formula is `discount% = min(discountRate * hoursElapsedInWindow, maximumDiscount, 80%)`. Price = `max(originalPrice * (1 - discount%), minimumPriceFloor)` rounded to whole rupees. `minimumPriceFloor` is an SRS extension (see DECISIONS.md DEC-05).
-
----
-
-## Part (c): Cart with Items from Two Different Stores — Steps 15-19
-
-**Profile A (Customer)**
-
-1. Go to `/marketplace`.
-2. Find a product from **FreshMart** (Store 1). Click **Add to Cart** (quantity 2).
-3. Observe: cart badge in navbar updates.
-4. Find a product from **GreenGrocer** (Store 2). Click **Add to Cart** (quantity 1).
-5. Go to `/cart`.
-6. Observe: both items appear with their **locked prices** and **price-hold countdown timers** (15 minutes).
-7. Note the `priceHoldExpiresAt` shown beside each item.
-8. In `/trace`, find `addItem-` correlationId and verify **steps 15, 16, 17, 18, 19** appear in sequence.
-
-**Key talking point:** Cart items from multiple stores are allowed. At checkout they are split into one Order per store. The 15-minute price hold is enforced by `CartItem.priceHoldExpiresAt` (SRS extension BR-7).
-
----
-
-## Part (d): Successful Payment Through to Delivery — Steps 20-40
-
-**Still in Profile A (Customer) — /cart**
-
-1. Click **Checkout**.
-2. Select payment method: **UPI**. Enter any UPI ID (e.g. `customer@upi`).
-3. Click **Place Order**.
-4. Expected: "Order placed successfully!" message appears. Two orders are listed (one per store).
-5. Go to `/customer/dashboard`. Click **Track Order** on Order 1.
-6. Observe: status = **PLACED** then quickly **CONFIRMED** (payment confirmed).
-
-**Profile B (Store 1 Owner) — /store/orders**
-
-7. The new order appears with a **15-minute countdown timer**.
-8. Click **Accept Order**. Status changes to **PREPARING**.
-
-**Profile D (Delivery Partner) — /delivery/dashboard**
-
-9. The delivery assignment appears (Status: ASSIGNED).
-10. Click **Accept Assignment**. Status changes to ACCEPTED.
-11. *(Store is PREPARING)* Click **Mark as Picked Up — Out for Delivery**.
-12. Status changes to OUT_FOR_DELIVERY.
-
-**Profile A (Customer) — /orders/[id] tracking page**
-
-13. Refresh. The step timeline updates: PREPARING → OUT_FOR_DELIVERY.
-14. Observe: delivery partner name and vehicle number appear.
-15. A notification badge appears in the navbar (bell icon).
-
-**Profile D (Delivery Partner)**
-
-16. Click **Confirm Delivery Completed**.
-
-**Profile A (Customer)**
-
-17. Refresh `/orders/[id]`. Status = **DELIVERED**. All steps filled in the timeline.
-18. Go to `/notifications`. See "Your order has been delivered!" notification (unread). Click it to mark read.
-19. Go to `/trace`. Find the `checkout-` correlationId.
-20. Verify **steps 20 through 40** appear in order. Point out each arrow matches the sequence diagram PDF.
-
-**Key talking points:**
-- Steps 32-33: `createDelivery()` and `assignDelivery()` happen atomically at checkout (see DECISIONS.md DEC-04).
-- Steps 35-37 and 38-40: each status update writes an `OrderStatusHistory` row and creates a `Notification`.
-- The delivery partner can only mark "Out for Delivery" when the order is in PREPARING status (guarded in `DeliveryService.setOutForDelivery()`).
-
----
-
-## Part (e): Failed Payment and Stock Release — Steps 41-45
-
-**Profile A (Customer)**
-
-1. Add a new item to cart from `/marketplace`.
-2. Go to `/cart`, click **Checkout**.
-3. Select **CARD**. Enter card number ending in **`0000`** (e.g. `4111 1111 1111 0000`).
-4. Click **Place Order**.
-5. Expected: error message "Payment authorization declined by simulated gateway".
-6. Observe: no order appears in `/customer/dashboard`.
-7. Go to `/marketplace` and check the same product: **stock is unchanged** (reservation was released).
-8. Go to `/trace`, find the correlationId. Verify steps **41, 42, 43, 44, 45** appear:
-   - Step 41: `paymentFailed` PaymentGateway → Payment
-   - Step 42: `paymentFailed` Payment → Order
-   - Step 43: `releaseReservedStock()` Order → InventoryItem
-   - Step 44: `stockReleased` InventoryItem → Order
-   - Step 45: `paymentFailed()` → Customer
-
-**Key talking point:** The entire checkout is wrapped in a Prisma `$transaction`. On payment failure, stock reservation is released atomically so no stock is permanently locked. Raw card numbers are never persisted (PCI compliance, see DECISIONS.md DEC-10).
-
----
-
-## Part (f): Out-of-Stock Branch — Steps 46-48
-
-**Profile E (Admin) or Profile B (Store Owner)**
-
-1. Go to the Admin panel or Store Portal.
-2. Edit a product's inventory — set quantity to **0**.
-
-**Profile A (Customer)**
-
-3. Go to `/marketplace`. The product is no longer shown (search returns only in-stock products).
-4. If you have the product in your cart already, try to **Checkout**.
-5. Expected: "Product unavailable or removed" error — the checkout service blocks it.
-6. Alternatively, use the Store Portal to reduce quantity below reserved quantity during an active flow.
-7. In `/trace`, verify steps **46, 47, 48** appear for out-of-stock scenarios.
-
-**Key talking point:** `InventoryItem.checkAvailability()` returns `isAvailable: false` when `quantity - reservedQuantity < requested`. This propagates as `stockUnavailable` (step 46) → `productUnavailable()` (steps 47-48).
-
----
-
-## Part (g): Viva Trace Walkthrough of Steps 1–40
-
-**Open `/trace` in any browser**
-
-1. The Viva Trace page lists all recent flows with their `correlationId` prefix.
-2. Select the most recent **checkout** flow (prefix `checkout-...`).
-3. Click through each step:
-   - Steps 1-14: Module 1 — search, price calculation
-   - Steps 15-19: cart add with price hold
-   - Steps 20-31: checkout, order creation, payment, stock reduction
-   - Steps 32-40: delivery creation, assignment, acceptance, out-for-delivery, delivered
-4. For each step, the trace shows: **step number, message label, from entity, to entity, timestamp, and details payload**.
-5. Show that the `correlationId` is shared across the entire flow (set at checkout, passed to all services).
-6. Show a **failure flow** (`correlationId` for a failed payment) — steps 41-45 appear.
-7. Show an **out-of-stock flow** — steps 46-48 appear.
-
-**Key talking point:** The `TraceLog` table is an SRS extension (documented in TRACEABILITY.md). Every method that implements a sequence diagram message calls `trace.step(n, label, from, to)` with the shared `correlationId`. This makes the entire flow visible as a live sequence diagram in the viva.
-
----
-
-## Demo Reset (if needed mid-demo)
-
-```bash
+# 1. Reset and deterministically seed database
 npm run db:reset
+
+# 2. Start local server
 npm run dev
 ```
 
-This resets the database to seed state with all demo accounts and products intact.
+Open your browser to: **`http://localhost:3000`**
+
+---
+
+## 2. Role-Based Demonstration Walkthrough
+
+### Part 1: Customer Shopping & Dynamic Expiry-Based Decay Pricing
+**Active Persona:** Click **Customer** (`Rahul Verma`)
+
+1. The app automatically routes to **Marketplace** (`http://localhost:3000/marketplace`).
+2. Notice the customer-specific navigation in the top bar: **Home**, **🛒 Marketplace**, **🛍️ Cart**, **📦 My Orders**, and **🔔 Notifications**.
+3. Observe live products organized across expiry bands:
+   - 🟢 `STANDARD` (72h+ remaining): Baseline pricing.
+   - 🟡 `SOON` (24h–72h remaining): Moderate decay discount.
+   - 🟠 `URGENT` (6h–24h remaining): Steep discount.
+   - 🔴 `CRITICAL` (0h–6h remaining): Deep discount approaching price floor / maximum discount cap.
+4. Filter by category (e.g. **Dairy**) or search for **"Milk"**.
+5. Click **Show Details** on *Fresh Whole Milk 1L* (`/products/1`).
+6. Observe: original price, current dynamic decay price, savings percentage, live countdown to expiry, and next price recalculation window.
+7. Select quantity (e.g. `2`) and click **Add to Cart**.
+8. Notice the confirmation showing that the item was locked into the cart under the **15-Minute Dynamic Price Hold** (BR-7).
+
+---
+
+### Part 2: Multi-Store Cart & Checkout (Path A — Successful Purchase)
+**Active Persona:** In **Customer** mode (`Rahul Verma`)
+
+1. Click **🛍️ Cart** (`/cart`) in the navigation.
+2. Observe:
+   - Items are grouped cleanly by store.
+   - The active **15-Minute Price Hold Countdown** displays live remaining seconds.
+   - Stock availability is verified against the store's inventory.
+3. Click **Proceed to Checkout**.
+4. In the checkout modal, click the **Success Card** preset (`4111 1111 1111 1111`).
+5. Click **Pay & Place Order**.
+6. Observe:
+   - Orders are split per store.
+   - Payment is authorized and recorded.
+   - Store inventory is decremented.
+   - The confirmation card displays order numbers and provides a link to **My Orders Portal →**.
+7. Click **My Orders Portal →** (`/customer/dashboard`) to view your new orders and tracking status.
+
+---
+
+### Part 3: Store Owner Console (Multi-Store Inventory, Analytics & Pricing Rules)
+**Active Persona:** Click **Store Owner** (`Ramesh Patel`) in the top Demo Switcher
+
+1. The browser instantly switches to the **Store Owner Console** (`/store`).
+2. Notice the navigation changes cleanly to role-appropriate links: **Home**, **🏪 Products & Rules**, **📋 Store Orders**, and **🔔 Notifications**. Customer Marketplace and Cart links are not shown.
+3. Observe FreshMart's console:
+   - FreshMart's verified status (`✓ Verified Store (BR-1)`) and address.
+   - **Store Performance & Inventory Analytics**: Total Listed products, Available Stock, Near-Expiry items (<24h), Store Orders, and Revenue.
+   - Inventory items: *Ripe Bananas Robusta*, *Fresh Whole Milk*, *Artisan Sourdough*.
+4. **Switch to GreenLeaf Organic Grocers**:
+   - In the top Evaluator Store Switcher strip, click **🌿 GreenLeaf (Priya)**.
+   - Notice the page reloads cleanly for GreenLeaf Organic Grocers:
+     - Verified status, updated store analytics.
+     - Store catalog displays GreenLeaf items: *Organic Paneer 200g*, *Fresh Croissants (Pack of 2)*, *Organic Button Mushrooms*.
+5. **Switch to Corner Daily Mart (Pending Verification)**:
+   - Click **🏬 CornerMart (Devendra)**.
+   - Notice status: `⚠ PENDING_VERIFICATION`.
+   - The **+ List New Near-Expiry Product** button is safely disabled per BR-1 until verified by an Administrator.
+6. **Inspect Store Orders**:
+   - Click **📋 Manage Orders** (`/store/orders`).
+   - Observe that only incoming orders for the active store are visible (e.g. GreenLeaf orders for Priya; FreshMart orders for Ramesh).
+   - Click **Accept Order** to transition status to `PREPARING`.
+
+---
+
+### Part 4: Delivery Partner Portal (Assigned Deliveries & Status Updates)
+**Active Persona:** Click **Delivery Partner** (`Vikram Singh`) in the Demo Switcher
+
+1. The browser instantly switches to the **Delivery Partner Portal** (`/delivery/dashboard`).
+2. Notice the navigation strictly shows: **Home**, **🛵 Deliveries**, and **🔔 Notifications**. (No Customer Marketplace or Cart links).
+3. View your assigned deliveries under **Assigned to You**.
+4. Progress the delivery through its authorized lifecycle:
+   - Click **Accept Assignment** → status transitions to `ACCEPTED`.
+   - Click **Mark Out for Delivery** → status transitions to `OUT_FOR_DELIVERY`.
+   - Click **Confirm Delivery Completed** → status transitions to `DELIVERED`.
+5. Switch back to **Customer** (`Rahul Verma`) and navigate to **📦 My Orders**:
+   - The order status shows **DELIVERED** with complete timestamped delivery history.
+
+---
+
+### Part 5: Simulated Payment Failure & Stock Rollback (Path B)
+**Active Persona:** Click **Customer** (`Rahul Verma`)
+
+1. From `/marketplace`, add an available item to the cart.
+2. Go to `/cart` and click **Proceed to Checkout**.
+3. In the checkout modal, click the **Fail Card** preset (card ending in `0000`).
+4. Click **Pay & Place Order**.
+5. Observe:
+   - Payment is declined by the simulation gateway.
+   - Clear failure notification: `Payment Failed • Stock Safely Rolled Back`.
+   - All temporarily reserved stock is automatically returned to available store inventory.
+
+---
+
+### Part 6: Administrator Console (Pricing Management, Verification & Time Travel)
+**Active Persona:** Click **Administrator** (`Admin Officer`) in the Demo Switcher
+
+1. The browser routes to the **Administrator Console** (`/admin`).
+2. Notice the navigation shows: **Home**, **🛡️ Admin Panel**, and **🔔 Notifications**.
+3. **Inspect the Dynamic Pricing Management Tab**:
+   - **Pricing Rules Editor**: View all global and store-scoped pricing rules (discount rate, threshold, max discount cap, price floor). Click **✏ Edit Rule** on Dairy to adjust parameters; verify that changes save to SQLite and trigger immediate recalculation for assigned products.
+   - **Cross-Store Product Pricing Overview**: Search by product name or filter by Store (FreshMart vs GreenLeaf), Category, or Expiry Band (Critical, Urgent, Soon, Standard).
+   - **Explain & History**: Click **🔍 Explain & History** on any product (e.g. *Organic Paneer 200g* or *Fresh Whole Milk 1L*). Observe the step-by-step mathematical breakdown showing the exact numbers computed by the backend `PricingEngine` and the persistent `PriceHistory` log.
+   - **Live Expiry-Decay Simulation**: In the simulator at the bottom, select any product and drag the **Hours Remaining** slider or click preset buttons (`72h`, `24h`, `8h`, `2h`, `0h`). Observe live calculation matching the backend formula with explicit "Non-Persistent Preview" indicator.
+4. **Inspect Stores & Verification Tab**:
+   - View partner stores with verification status (`VERIFIED` vs `PENDING`).
+   - One-click store verification toggle (`BR-1`).
+5. **Inspect Simulation Clock & Jobs Tab**:
+   - Advance the virtual clock by **+6 hours** in the Time Travel widget:
+     - Simulates time passage, immediately updating expiry bands and decay discounts.
+   - Click **⚡ Run Pricing Job Now** to execute scheduled recalculation across all active products.
+   - Click **↺ Reset Clock to Real System Time** to return the platform to current time safely.
+
+---
+
+### Part 7: Role Isolation & Direct URL Access Verification
+
+Verify that route guards enforce proper boundaries:
+1. While logged in as **Delivery Partner** (`Vikram Singh`), manually navigate to `http://localhost:3000/cart`:
+   - Access is restricted with: `Customer Access Required: Shopping cart is only accessible to Customers.`
+   - Active persona remains `DELIVERY_PARTNER` (never silently switched to Customer).
+2. While logged in as **Delivery Partner**, manually navigate to `http://localhost:3000/marketplace`:
+   - A friendly access notice displays: `Delivery Partner Portal: The Marketplace is customer-facing.` with a button to return to the Delivery Dashboard.
+3. While logged in as **Customer**, manually navigate to `http://localhost:3000/store` or `http://localhost:3000/admin`:
+   - Access is restricted with: `Store Owner Access Required` or `Administrator Access Required`.
+
+---
+
+## 3. Resetting the Demo
+
+If at any point during your evaluation or demonstration you wish to return to a clean baseline state:
+
+```bash
+npm run db:reset
+```
+
+The database will be restored with fresh seed timestamps, active orders, and clean inventory.

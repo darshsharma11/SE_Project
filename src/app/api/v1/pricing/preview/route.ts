@@ -46,10 +46,11 @@ export async function POST(request: NextRequest) {
       const simulatedExpiry = new Date(now.getTime() + hours * 3600 * 1000);
       const discountFraction = rule.calculateDiscount(simulatedExpiry, now);
 
-      const computedPrice = Math.max(
+      const flooredPrice = Math.max(
         originalPrice * (1 - discountFraction),
         rule.minimumPriceFloor
       );
+      const computedPrice = Math.min(originalPrice, flooredPrice);
       const roundedPrice = Math.round(computedPrice);
       const effectiveDiscountPercent =
         originalPrice > 0

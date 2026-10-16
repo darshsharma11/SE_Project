@@ -329,7 +329,7 @@ export default function DeliveryDashboardPage() {
 
                     {delivery.status === "DELIVERED" && (
                       <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl p-3 font-bold text-center">
-                        ✅ Delivery Successfully Completed — Steps 38–40 recorded in trace
+                        ✅ Delivery Successfully Completed
                       </div>
                     )}
                   </div>

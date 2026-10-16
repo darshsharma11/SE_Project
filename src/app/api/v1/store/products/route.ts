@@ -16,31 +16,51 @@ const CreateProductSchema = z.object({
   }),
   quantity: z.number().int().positive("Initial quantity must be at least 1"),
   pricingRuleId: z.number().optional().nullable(),
+  storeId: z.number().int().optional(),
 });
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "STORE_OWNER") {
+    if (!session || (session.role !== "STORE_OWNER" && session.role !== "ADMIN")) {
       return NextResponse.json(
-        { error: "Unauthorized: STORE_OWNER role required" },
+        { error: "Unauthorized: STORE_OWNER or ADMIN role required" },
         { status: 401 }
       );
     }
 
-    const store = await prisma.store.findFirst({
-      where: { ownerId: session.userId },
+    // Find all stores owned by this user (or all stores if ADMIN)
+    const stores = await prisma.store.findMany({
+      where: session.role === "ADMIN" ? {} : { ownerId: session.userId },
+      orderBy: { storeId: "asc" },
     });
 
-    if (!store) {
+    if (stores.length === 0) {
       return NextResponse.json(
         { error: "No store found for current user" },
         { status: 404 }
       );
     }
 
+    const requestedStoreId = request.nextUrl.searchParams.get("storeId");
+    let activeStore = stores[0];
+
+    if (requestedStoreId) {
+      const parsedId = parseInt(requestedStoreId, 10);
+      const matched = stores.find((s) => s.storeId === parsedId);
+      if (!matched && session.role !== "ADMIN") {
+        return NextResponse.json(
+          { error: `Forbidden: You do not own store #${parsedId}` },
+          { status: 403 }
+        );
+      }
+      if (matched) {
+        activeStore = matched;
+      }
+    }
+
     const products = await prisma.product.findMany({
-      where: { storeId: store.storeId },
+      where: { storeId: activeStore.storeId },
       include: {
         inventoryItem: true,
         pricingRule: true,
@@ -52,13 +72,54 @@ export async function GET() {
       orderBy: { productId: "desc" },
     });
 
+    const now = clock.now();
+    const in24h = new Date(now.getTime() + 24 * 3600 * 1000);
+
+    // Compute store analytics for this active store
+    const storeOrders = await prisma.order.findMany({
+      where: { storeId: activeStore.storeId },
+      select: { totalAmount: true, status: true },
+    });
+
+    const totalProducts = products.filter((p) => p.status === "ACTIVE").length;
+    const totalInventory = products.reduce((sum, p) => {
+      if (p.inventoryItem && p.status === "ACTIVE") {
+        return sum + Math.max(0, p.inventoryItem.quantity - p.inventoryItem.reservedQuantity);
+      }
+      return sum;
+    }, 0);
+    const nearExpiryCount = products.filter(
+      (p) => p.status === "ACTIVE" && p.expiryDateTime <= in24h && p.expiryDateTime > now
+    ).length;
+    const totalOrders = storeOrders.length;
+    const pendingOrders = storeOrders.filter(
+      (o) => o.status === "PLACED" || o.status === "CONFIRMED"
+    ).length;
+    const storeRevenue = storeOrders
+      .filter((o) => ["PREPARING", "OUT_FOR_DELIVERY", "DELIVERED"].includes(o.status))
+      .reduce((sum, o) => sum + o.totalAmount, 0);
+
     return NextResponse.json({
       success: true,
       data: products,
       store: {
-        storeId: store.storeId,
-        storeName: store.storeName,
-        status: store.status,
+        storeId: activeStore.storeId,
+        storeName: activeStore.storeName,
+        status: activeStore.status,
+        address: activeStore.address,
+      },
+      stores: stores.map((s) => ({
+        storeId: s.storeId,
+        storeName: s.storeName,
+        status: s.status,
+      })),
+      analytics: {
+        totalProducts,
+        totalInventory,
+        nearExpiryCount,
+        totalOrders,
+        pendingOrders,
+        storeRevenue,
       },
     });
   } catch (error: any) {
@@ -73,16 +134,41 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "STORE_OWNER") {
+    if (!session || (session.role !== "STORE_OWNER" && session.role !== "ADMIN")) {
       return NextResponse.json(
-        { error: "Unauthorized: STORE_OWNER role required" },
+        { error: "Unauthorized: STORE_OWNER or ADMIN role required" },
         { status: 401 }
       );
     }
 
-    const storeRow = await prisma.store.findFirst({
-      where: { ownerId: session.userId },
-    });
+    const body = await request.json();
+    const parsed = CreateProductSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Validation error", details: parsed.error.format() },
+        { status: 400 }
+      );
+    }
+
+    const { name, category, originalPrice, expiryDateTime, quantity, pricingRuleId, storeId } =
+      parsed.data;
+
+    let storeRow: any = null;
+    if (storeId) {
+      storeRow = await prisma.store.findUnique({
+        where: { storeId },
+      });
+      if (!storeRow || (storeRow.ownerId !== session.userId && session.role !== "ADMIN")) {
+        return NextResponse.json(
+          { error: "Forbidden: You do not own this store" },
+          { status: 403 }
+        );
+      }
+    } else {
+      storeRow = await prisma.store.findFirst({
+        where: { ownerId: session.userId },
+      });
+    }
 
     if (!storeRow) {
       return NextResponse.json(
@@ -101,17 +187,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const parsed = CreateProductSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Validation error", details: parsed.error.format() },
-        { status: 400 }
-      );
-    }
-
-    const { name, category, originalPrice, expiryDateTime, quantity, pricingRuleId } =
-      parsed.data;
     const expiryDate = new Date(expiryDateTime);
     const now = clock.now();
 
@@ -133,16 +208,43 @@ export async function POST(request: NextRequest) {
       now,
     });
 
-    // Determine initial pricing rule
+    // Determine and validate initial pricing rule
     let ruleDomain = undefined;
     if (pricingRuleId) {
       const ruleRow = await PricingRuleRepository.findById(pricingRuleId);
-      if (ruleRow) ruleDomain = ruleRow;
+      if (!ruleRow) {
+        return NextResponse.json(
+          { error: `Pricing rule ID ${pricingRuleId} not found` },
+          { status: 400 }
+        );
+      }
+      if (
+        ruleRow.storeId !== undefined &&
+        ruleRow.storeId !== storeRow.storeId &&
+        session.role !== "ADMIN"
+      ) {
+        return NextResponse.json(
+          { error: "Forbidden: Cannot assign a private pricing rule from another store" },
+          { status: 403 }
+        );
+      }
+      if (
+        ruleRow.category &&
+        ruleRow.category.toLowerCase() !== category.toLowerCase()
+      ) {
+        return NextResponse.json(
+          {
+            error: `Pricing rule category "${ruleRow.category}" is incompatible with product category "${category}"`,
+          },
+          { status: 400 }
+        );
+      }
+      ruleDomain = ruleRow;
     }
 
     // Calculate initial dynamic price
     const engine = new PricingEngine();
-    const calculatedPrice = engine.calculatePrice(
+    const { price: calculatedPrice } = await engine.calculateAuthoritativePrice(
       productDomain,
       ruleDomain,
       now

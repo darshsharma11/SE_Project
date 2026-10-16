@@ -25,9 +25,9 @@ export async function PATCH(
 ) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "STORE_OWNER") {
+    if (!session || (session.role !== "STORE_OWNER" && session.role !== "ADMIN")) {
       return NextResponse.json(
-        { error: "Unauthorized: STORE_OWNER role required" },
+        { error: "Unauthorized: STORE_OWNER or ADMIN role required" },
         { status: 401 }
       );
     }
@@ -100,7 +100,7 @@ export async function PATCH(
           : existingProduct.pricingRuleId,
     });
 
-    // Determine pricing rule
+    // Determine and validate pricing rule
     const ruleIdToUse =
       pricingRuleId !== undefined
         ? pricingRuleId
@@ -108,13 +108,42 @@ export async function PATCH(
 
     let ruleDomain = undefined;
     if (ruleIdToUse) {
-      ruleDomain = (await PricingRuleRepository.findById(ruleIdToUse)) ?? undefined;
+      const found = await PricingRuleRepository.findById(ruleIdToUse);
+      if (!found) {
+        return NextResponse.json(
+          { error: `Pricing rule ID ${ruleIdToUse} not found` },
+          { status: 400 }
+        );
+      }
+      if (
+        found.storeId !== undefined &&
+        found.storeId !== existingProduct.storeId &&
+        session.role !== "ADMIN"
+      ) {
+        return NextResponse.json(
+          { error: "Forbidden: Cannot assign a private pricing rule from another store" },
+          { status: 403 }
+        );
+      }
+      const effectiveCategory = category ?? existingProduct.category;
+      if (
+        found.category &&
+        found.category.toLowerCase() !== effectiveCategory.toLowerCase()
+      ) {
+        return NextResponse.json(
+          {
+            error: `Pricing rule category "${found.category}" is incompatible with product category "${effectiveCategory}"`,
+          },
+          { status: 400 }
+        );
+      }
+      ruleDomain = found;
     }
 
-    // Immediately recalculate price
+    // Immediately recalculate authoritative price
     const engine = new PricingEngine();
     const previousPrice = existingProduct.currentPrice;
-    const recalculatedPrice = engine.calculatePrice(
+    const { price: recalculatedPrice } = await engine.calculateAuthoritativePrice(
       productDomain,
       ruleDomain,
       now

@@ -149,8 +149,7 @@ SE_PROJECT/
 │   │   ├── store/orders/      # Store order management with 15-min countdown
 │   │   ├── delivery/dashboard/# Delivery partner: accept, pickup, deliver
 │   │   ├── notifications/     # Notification centre with unread count
-│   │   ├── admin/             # Admin: verify store, clock control, config
-│   │   └── trace/             # Viva Trace: step-by-step sequence viewer
+│   │   └── admin/             # Admin: verify store, clock control, config
 │   │
 │   ├── lib/
 │   │   ├── clock.ts           # Single source of "now"; supports setFixed() / advance()
@@ -177,7 +176,7 @@ SE_PROJECT/
 
 | Module | Sequence Steps | Services | Domain Classes | UI Pages |
 |--------|---------------|----------|----------------|----------|
-| **Module 1**: Product, Expiry & Dynamic Pricing | Steps 1-14 | `MarketplaceService`, `PricingEngine`, `PricingRule` | `Product`, `InventoryItem`, `PricingRule`, `PricingEngine`, `Store` | `/marketplace`, `/store`, `/admin`, `/trace` |
+| **Module 1**: Product, Expiry & Dynamic Pricing | Steps 1-14 | `MarketplaceService`, `PricingEngine`, `PricingRule` | `Product`, `InventoryItem`, `PricingRule`, `PricingEngine`, `Store` | `/marketplace`, `/store`, `/admin` |
 | **Module 2A**: Cart, Order, Payment | Steps 15-31, 41-48 | `CartService`, `CheckoutService`, `PaymentService` | `ShoppingCart`, `CartItem`, `Order`, `OrderItem`, `Payment`, `InventoryItem` | `/cart`, `/customer/dashboard`, `/checkout` |
 | **Module 2B**: Delivery | Steps 32-40 | `DeliveryService`, `StoreOrderService`, `NotificationService` | `Delivery`, `DeliveryPartner`, `Notification`, `Order` | `/store/orders`, `/delivery/dashboard`, `/orders/[id]`, `/notifications` |
 
@@ -189,7 +188,7 @@ SE_PROJECT/
 2. **Stock changes only via `InventoryItem` methods** (`reserveStock`, `reduceStock`, `releaseReservedStock`, `updateQuantity`).
 3. **Business logic lives in `src/domain/` and `src/services/`** — API routes only validate (Zod) + check roles + call a service.
 4. **All `now` reads go through `src/lib/clock.ts`** — enables time travel for demo.
-5. **Every sequence-diagram step calls `trace.step(n, label, from, to)`** — visible at `/trace`.
+5. **Every sequence-diagram step logs via `trace.step(n, label, from, to)`** — persisted in SQLite `TraceLog` table for diagnostic verification.
 6. **Multi-step DB changes run inside `prisma.$transaction`** — stock cannot be left reserved by a crash.
 7. **No raw card data stored** — only gateway `transactionId` is persisted.
 

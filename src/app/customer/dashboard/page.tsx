@@ -1,10 +1,27 @@
-import { requireAuth } from "@/lib/auth";
+import { getSession, isDemoMode, getDemoPersona } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import ClockWidget from "@/components/ClockWidget";
 import Link from "next/link";
 
 export default async function CustomerDashboard() {
-  const session = await requireAuth(["CUSTOMER"]);
+  let session = await getSession();
+  if (isDemoMode() && !session) {
+    const demoCust = await getDemoPersona("CUSTOMER");
+    if (demoCust) session = demoCust;
+  }
+
+  if (!session || session.role !== "CUSTOMER") {
+    return (
+      <div className="max-w-xl mx-auto p-8 text-center bg-white rounded-2xl border border-slate-200 mt-8 shadow-sm">
+        <div className="text-4xl mb-3">🛒</div>
+        <h2 className="text-xl font-bold text-slate-800">Customer Portal Access Restricted</h2>
+        <p className="text-sm text-slate-500 mt-2">
+          You are currently signed in as <span className="font-semibold text-amber-600">{session?.role || "GUEST"}</span>. Please select the <span className="font-semibold text-emerald-600">Customer</span> role in the Demo Switcher above to view customer orders.
+        </p>
+      </div>
+    );
+  }
+
   const customer = await prisma.customer.findUnique({
     where: { customerId: session.userId },
   });
@@ -89,7 +106,7 @@ export default async function CustomerDashboard() {
               {orders.length} Orders
             </div>
             <div className="text-xs text-slate-500 mt-1">
-              Tracked end-to-end via Sequence Trace
+              Tracked end-to-end via Order Tracking
             </div>
           </div>
 
@@ -225,13 +242,6 @@ export default async function CustomerDashboard() {
                         className="text-xs font-bold text-blue-700 hover:text-blue-800 hover:underline flex items-center gap-1"
                       >
                         <span>📍 Track Order</span>
-                        <span>→</span>
-                      </Link>
-                      <Link
-                        href={`/trace`}
-                        className="text-xs font-bold text-emerald-700 hover:text-emerald-800 hover:underline flex items-center gap-1"
-                      >
-                        <span>🔍 Viva Trace</span>
                         <span>→</span>
                       </Link>
                     </div>

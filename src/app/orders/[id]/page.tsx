@@ -114,6 +114,18 @@ export default function OrderTrackingPage() {
   const [order, setOrder] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [userRole, setUserRole] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/v1/auth/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.authenticated && data.user) {
+          setUserRole(data.user.role);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const fetchOrder = useCallback(async () => {
     try {
@@ -137,6 +149,20 @@ export default function OrderTrackingPage() {
     return () => clearInterval(interval);
   }, [fetchOrder]);
 
+  let backHref = "/customer/dashboard";
+  let backLabel = "← My Orders";
+
+  if (userRole === "DELIVERY_PARTNER") {
+    backHref = "/delivery/dashboard";
+    backLabel = "← Back to Deliveries";
+  } else if (userRole === "STORE_OWNER") {
+    backHref = "/store/orders";
+    backLabel = "← Back to Store Orders";
+  } else if (userRole === "ADMIN") {
+    backHref = "/admin";
+    backLabel = "← Back to Admin Console";
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-96">
@@ -154,8 +180,8 @@ export default function OrderTrackingPage() {
         <div className="text-3xl">⚠️</div>
         <h2 className="text-base font-bold text-rose-800">Order Not Found</h2>
         <p className="text-sm text-rose-700">{error}</p>
-        <Link href="/customer/dashboard" className="text-xs font-bold text-emerald-700 hover:underline">
-          ← Back to Dashboard
+        <Link href={backHref} className="text-xs font-bold text-emerald-700 hover:underline">
+          {backLabel}
         </Link>
       </div>
     );
@@ -254,20 +280,6 @@ export default function OrderTrackingPage() {
               ))}
             </div>
           </div>
-
-          {/* Trace Link */}
-          {order.correlationId && (
-            <div className="bg-slate-50 rounded-xl border border-slate-200 p-4">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sequence Trace</p>
-              <p className="text-xs font-mono text-slate-600 truncate mb-2">{order.correlationId}</p>
-              <Link
-                href={`/trace`}
-                className="text-xs font-bold text-emerald-700 hover:underline"
-              >
-                🔍 View steps 1–40 in Viva Trace →
-              </Link>
-            </div>
-          )}
         </div>
       </div>
 
@@ -296,8 +308,8 @@ export default function OrderTrackingPage() {
 
       {/* Navigation */}
       <div className="flex gap-3">
-        <Link href="/customer/dashboard" className="text-xs font-bold text-slate-600 hover:text-slate-800 border border-slate-200 px-4 py-2 rounded-xl bg-white hover:bg-slate-50 transition">
-          ← My Orders
+        <Link href={backHref} className="text-xs font-bold text-slate-600 hover:text-slate-800 border border-slate-200 px-4 py-2 rounded-xl bg-white hover:bg-slate-50 transition">
+          {backLabel}
         </Link>
         <button
           onClick={fetchOrder}

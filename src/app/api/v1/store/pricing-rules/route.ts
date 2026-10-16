@@ -18,7 +18,7 @@ const PricingRuleSchema = z.object({
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
     if (!session || (session.role !== "STORE_OWNER" && session.role !== "ADMIN")) {
@@ -28,14 +28,24 @@ export async function GET() {
       );
     }
 
-    const store = await prisma.store.findFirst({
-      where: { ownerId: session.userId },
+    const stores = await prisma.store.findMany({
+      where: session.role === "ADMIN" ? {} : { ownerId: session.userId },
+      orderBy: { storeId: "asc" },
     });
+
+    const requestedStoreId = request.nextUrl.searchParams.get("storeId");
+    let activeStore = stores[0];
+
+    if (requestedStoreId && stores.length > 0) {
+      const parsedId = parseInt(requestedStoreId, 10);
+      const matched = stores.find((s) => s.storeId === parsedId);
+      if (matched) activeStore = matched;
+    }
 
     const rules = await prisma.pricingRule.findMany({
       where: {
         OR: [
-          { storeId: store?.storeId ?? undefined },
+          { storeId: activeStore?.storeId ?? undefined },
           { storeId: null },
         ],
       },
@@ -47,6 +57,8 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      store: activeStore ? { storeId: activeStore.storeId, storeName: activeStore.storeName } : null,
+      stores: stores.map((s) => ({ storeId: s.storeId, storeName: s.storeName, status: s.status })),
       data: rules,
     });
   } catch (error: any) {
@@ -61,9 +73,9 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     const session = await getSession();
-    if (!session || session.role !== "STORE_OWNER") {
+    if (!session || (session.role !== "STORE_OWNER" && session.role !== "ADMIN")) {
       return NextResponse.json(
-        { error: "Unauthorized: STORE_OWNER required" },
+        { error: "Unauthorized: STORE_OWNER or ADMIN required" },
         { status: 401 }
       );
     }
@@ -100,7 +112,37 @@ export async function PUT(request: NextRequest) {
     const now = clock.now();
     const engine = new PricingEngine();
 
-    // Upsert pricing rule
+    // Upsert pricing rule with strict ownership verification
+    if (ruleId) {
+      const existingRule = await prisma.pricingRule.findUnique({
+        where: { ruleId },
+      });
+      if (!existingRule) {
+        return NextResponse.json(
+          { error: "Pricing rule not found" },
+          { status: 404 }
+        );
+      }
+      // Store owners cannot edit another store's private rules
+      if (
+        existingRule.storeId !== null &&
+        existingRule.storeId !== store.storeId &&
+        session.role !== "ADMIN"
+      ) {
+        return NextResponse.json(
+          { error: "Forbidden: You do not have permission to modify another store's pricing rule" },
+          { status: 403 }
+        );
+      }
+      // Store owners cannot overwrite global rules (storeId === null)
+      if (existingRule.storeId === null && session.role !== "ADMIN") {
+        return NextResponse.json(
+          { error: "Forbidden: Global platform rules can only be edited by an Administrator" },
+          { status: 403 }
+        );
+      }
+    }
+
     const savedRule = ruleId
       ? await prisma.pricingRule.update({
           where: { ruleId },

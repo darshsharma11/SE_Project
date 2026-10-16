@@ -10,6 +10,7 @@ import { InventoryItem } from "@/domain/InventoryItem";
 import { Product } from "@/domain/Product";
 import { deliveryService } from "./DeliveryService";
 import { notificationService } from "./NotificationService";
+import { PricingRuleRepository } from "@/repositories/PricingRuleRepository";
 
 export interface CheckoutParams {
   customerId: number;
@@ -77,6 +78,30 @@ export class CheckoutService {
       params.correlationId ?? trace.generateCorrelationId("checkout");
     const now = clock.now();
 
+    // Idempotency check: prevent duplicate order creation, gateway charging, and stock deduction
+    if (params.correlationId) {
+      const existingOrders = await prisma.order.findMany({
+        where: { correlationId: params.correlationId, customerId: params.customerId },
+        include: { payment: true, items: true },
+      });
+      if (existingOrders.length > 0) {
+        const payment = existingOrders[0]?.payment;
+        if (payment && payment.status === "SUCCESSFUL") {
+          return {
+            success: true,
+            correlationId: params.correlationId,
+            orders: existingOrders,
+            payment: {
+              transactionId: payment.transactionId || "",
+              amount: existingOrders.reduce((sum, o) => sum + o.totalAmount, 0),
+              method: payment.method as any,
+              status: "SUCCESSFUL",
+            },
+          };
+        }
+      }
+    }
+
     // Step 20: Customer -> CheckoutService checkout()
     await trace.step({
       correlationId,
@@ -118,6 +143,16 @@ export class CheckoutService {
 
     for (const item of cart.items) {
       const product = item.product;
+
+      // Enforce store verification
+      if (product.store.status !== "VERIFIED") {
+        return {
+          success: false,
+          correlationId,
+          productUnavailable: true,
+          error: `Store "${product.store.storeName}" is not verified for selling. Products from this store cannot be purchased.`,
+        };
+      }
 
       // Block products that are expired or removed
       const isExpired = product.expiryDateTime.getTime() <= now.getTime();
@@ -175,7 +210,16 @@ export class CheckoutService {
         skipExpiryCheck: true,
       });
 
-      const currentEnginePrice = await this.pricingEngine.calculatePrice(domainProduct);
+      const domainRule = product.pricingRule
+        ? PricingRuleRepository.toDomain(product.pricingRule)
+        : await this.pricingEngine.resolveRuleForProduct(product);
+
+      const { price: currentEnginePrice } =
+        await this.pricingEngine.calculateAuthoritativePrice(
+          domainProduct,
+          domainRule,
+          now
+        );
 
       if (isHoldExpired && currentEnginePrice !== item.price) {
         priceChangedItems.push({
@@ -333,6 +377,13 @@ export class CheckoutService {
             where: { productId: si.productId },
           });
           if (!inv) throw new Error(`Inventory item not found for product ${si.productId}`);
+
+          const availableNow = inv.quantity - inv.reservedQuantity;
+          if (availableNow < si.quantity) {
+            throw new Error(
+              `stockUnavailable: Insufficient stock for product ID ${si.productId}. Available: ${availableNow}, Requested: ${si.quantity}`
+            );
+          }
 
           const newReserved = inv.reservedQuantity + si.quantity;
           await tx.inventoryItem.update({

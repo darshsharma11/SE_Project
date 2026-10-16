@@ -6,6 +6,7 @@ import { CartItem } from "@/domain/CartItem";
 import { Product } from "@/domain/Product";
 import { InventoryItem } from "@/domain/InventoryItem";
 import { PricingEngine } from "@/domain/PricingEngine";
+import { PricingRuleRepository } from "@/repositories/PricingRuleRepository";
 
 export class CartService {
   private pricingEngine: PricingEngine;
@@ -76,7 +77,15 @@ export class CartService {
           skipExpiryCheck: true,
         });
 
-        const latestEnginePrice = await this.pricingEngine.calculatePrice(domainProduct);
+        const ruleDomain = prod.pricingRule
+          ? PricingRuleRepository.toDomain(prod.pricingRule)
+          : undefined;
+        const { price: latestEnginePrice } =
+          await this.pricingEngine.calculateAuthoritativePrice(
+            domainProduct,
+            ruleDomain,
+            now
+          );
         const holdExpiresAt = new Date(item.priceHoldExpiresAt);
         const isHoldExpired = holdExpiresAt.getTime() <= now.getTime();
         const holdRemainingSeconds = Math.max(
@@ -176,6 +185,35 @@ export class CartService {
       throw new Error("Product not found");
     }
 
+    // Enforce server-side product availability
+    if (productRow.status !== "ACTIVE") {
+      throw new Error(
+        `Product "${productRow.name}" is not available for purchase (status: ${productRow.status})`
+      );
+    }
+
+    if (productRow.expiryDateTime.getTime() <= now.getTime()) {
+      throw new Error(
+        `Product "${productRow.name}" has expired and cannot be added to cart`
+      );
+    }
+
+    if (productRow.store.status !== "VERIFIED") {
+      throw new Error(
+        `Store "${productRow.store.storeName}" is not verified for selling`
+      );
+    }
+
+    const available = productRow.inventoryItem
+      ? productRow.inventoryItem.quantity - productRow.inventoryItem.reservedQuantity
+      : 0;
+
+    if (available < quantity) {
+      throw new Error(
+        `stockUnavailable: insufficient stock for "${productRow.name}". Available: ${available}, Requested: ${quantity}`
+      );
+    }
+
     const domainProduct = new Product({
       productId: productRow.productId,
       name: productRow.name,
@@ -197,6 +235,10 @@ export class CartService {
           productId: productRow.productId,
         })
       : undefined;
+
+    const domainRule = productRow.pricingRule
+      ? PricingRuleRepository.toDomain(productRow.pricingRule)
+      : await this.pricingEngine.resolveRuleForProduct(productRow);
 
     // Get or create shopping cart for customer
     let cartRow = await prisma.shoppingCart.findUnique({
@@ -228,10 +270,11 @@ export class CartService {
       ),
     });
 
-    // Execute domain addItem (steps 15-19)
+    // Execute domain addItem (steps 15-19) with applicable pricing rule
     const result = await domainCart.addItem(domainProduct, quantity, {
       inventory: domainInventory,
       pricingEngine: this.pricingEngine,
+      pricingRule: domainRule,
       correlationId,
       now,
     });

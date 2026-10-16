@@ -3,6 +3,8 @@ import { z } from "zod";
 import { marketplaceService } from "@/services/MarketplaceService";
 import { ExpiryBand } from "@/lib/config";
 
+export const dynamic = "force-dynamic";
+
 const SearchQuerySchema = z.object({
   q: z.string().optional(),
   keyword: z.string().optional(),
